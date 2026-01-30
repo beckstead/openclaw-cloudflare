@@ -1,9 +1,11 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "moltbot-sandbox",
+  "name": "openclaw-cloudflare",
   "main": "src/index.ts",
   "compatibility_date": "2025-05-06",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "observability": {
     "enabled": true,
   },
@@ -19,12 +21,16 @@
   "rules": [
     {
       "type": "Text",
-      "globs": ["**/*.html"],
+      "globs": [
+        "**/*.html"
+      ],
       "fallthrough": false,
     },
     {
       "type": "Data",
-      "globs": ["**/*.png"],
+      "globs": [
+        "**/*.png"
+      ],
       "fallthrough": false,
     },
   ],
@@ -51,20 +57,24 @@
   },
   "migrations": [
     {
-      "new_sqlite_classes": ["Sandbox"],
+      "new_sqlite_classes": [
+        "Sandbox"
+      ],
       "tag": "v1",
     },
   ],
   // R2 bucket for persistent storage (moltbot data, conversations, etc.)
   "r2_buckets": [
     {
-      "binding": "MOLTBOT_BUCKET",
-      "bucket_name": "moltbot-data",
+      "binding": "OPENCLAW_BUCKET",
+      "bucket_name": "openclaw-data",
     },
   ],
   // Cron trigger to sync moltbot data to R2 every 5 minutes
   "triggers": {
-    "crons": ["*/5 * * * *"],
+    "crons": [
+      "*/5 * * * *"
+    ],
   },
   // Browser Rendering binding for CDP shim
   "browser": {
