@@ -4,19 +4,35 @@ import { R2_MOUNT_PATH, R2_BUCKET_NAME } from '../config';
 import { waitForProcess } from './utils';
 
 /**
- * Check if R2 is already mounted by looking at the mount table
+ * Check if R2 is already mounted by looking at the mount table.
+ *
+ * Important: sandbox process status can lag behind actual completion, so we
+ * must not treat a `running` status as authoritative for small commands.
  */
 async function isR2Mounted(sandbox: Sandbox): Promise<boolean> {
   try {
-    // Avoid shell pipelines here; just parse `mount` output directly.
-    // Example mount line (varies by environment):
-    //   s3fs#<bucket> on /data/openclaw type fuse.s3fs (rw,nosuid,nodev,...)
-    const proc = await sandbox.startProcess('mount');
-    await waitForProcess(proc, 5000, 200);
-    const logs = await proc.getLogs();
-    const out = logs.stdout || '';
-    const lines = out.split('\n');
-    const mounted = lines.some((line) => line.includes('s3fs') && line.includes(` on ${R2_MOUNT_PATH} `));
+    // Prefer /proc/mounts: stable format and no shell needed.
+    const proc = await sandbox.startProcess('cat /proc/mounts');
+
+    // Best-effort wait: status may lag, so ignore timeouts.
+    await waitForProcess(proc, 5000, 200).catch(() => {});
+
+    // Poll logs briefly in case status/logs lag behind each other.
+    let stdout = '';
+    for (let i = 0; i < 10; i++) {
+      const logs = await proc.getLogs().catch(() => ({ stdout: '', stderr: '' }));
+      stdout = logs.stdout || '';
+      if (stdout.trim().length > 0) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    const lines = stdout.split('\n');
+    // `mount` output uses "on <path>", /proc/mounts uses "<path>".
+    const mounted = lines.some((line) => {
+      if (!line.includes('s3fs')) return false;
+      return line.includes(` ${R2_MOUNT_PATH} `) || line.includes(` on ${R2_MOUNT_PATH} `);
+    });
+
     console.log('isR2Mounted check:', mounted);
     return mounted;
   } catch (err) {
