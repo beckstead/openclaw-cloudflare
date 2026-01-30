@@ -1,5 +1,5 @@
 import type { Context, Next } from 'hono';
-import type { AppEnv, MoltbotEnv } from '../types';
+import type { AppEnv, OpenClawEnv } from '../types';
 import { verifyAccessJWT } from './jwt';
 
 /**
@@ -15,7 +15,7 @@ export interface AccessMiddlewareOptions {
 /**
  * Check if running in development mode (skips CF Access auth)
  */
-export function isDevMode(env: MoltbotEnv): boolean {
+export function isDevMode(env: OpenClawEnv): boolean {
   return env.DEV_MODE === 'true';
 }
 

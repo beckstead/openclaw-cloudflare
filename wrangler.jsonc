@@ -38,7 +38,7 @@
   "build": {
     "command": "pnpm run build",
   },
-  // Container configuration for the Moltbot sandbox
+  // Container configuration for the OpenClaw sandbox
   "containers": [
     {
       "class_name": "Sandbox",
@@ -63,14 +63,14 @@
       "tag": "v1",
     },
   ],
-  // R2 bucket for persistent storage (moltbot data, conversations, etc.)
+  // R2 bucket for persistent storage (openclaw data, conversations, etc.)
   "r2_buckets": [
     {
       "binding": "OPENCLAW_BUCKET",
       "bucket_name": "openclaw-data",
     },
   ],
-  // Cron trigger to sync moltbot data to R2 every 5 minutes
+  // Cron trigger to sync openclaw data to R2 every 5 minutes
   "triggers": {
     "crons": [
       "*/5 * * * *"

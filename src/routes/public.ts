@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { MOLTBOT_PORT } from '../config';
-import { findExistingMoltbotProcess } from '../gateway';
+import { findExistingOpenClawProcess } from '../gateway';
 
 /**
  * Public routes - NO Cloudflare Access authentication required
@@ -15,7 +15,7 @@ const publicRoutes = new Hono<AppEnv>();
 publicRoutes.get('/sandbox-health', (c) => {
   return c.json({
     status: 'ok',
-    service: 'moltbot-sandbox',
+    service: 'openclaw-sandbox',
     gateway_port: MOLTBOT_PORT,
   });
 });
@@ -35,7 +35,7 @@ publicRoutes.get('/api/status', async (c) => {
   const sandbox = c.get('sandbox');
   
   try {
-    const process = await findExistingMoltbotProcess(sandbox);
+    const process = await findExistingOpenClawProcess(sandbox);
     if (!process) {
       return c.json({ ok: false, status: 'not_running' });
     }
