@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
-import { findExistingOpenClawProcess } from '../gateway';
+import { findExistingOpenClawProcess, syncToR2 } from '../gateway';
 
 /**
  * Debug routes for inspecting container state
@@ -351,6 +351,55 @@ debug.get('/env', async (c) => {
     cf_access_team_domain: c.env.CF_ACCESS_TEAM_DOMAIN,
     has_cf_access_aud: !!c.env.CF_ACCESS_AUD,
   });
+});
+
+// POST /debug/r2-sync - Trigger an on-demand backup sync to R2
+// Note: This can take up to ~2 minutes depending on data size.
+debug.post('/r2-sync', async (c) => {
+  const sandbox = c.get('sandbox');
+  const startedAt = Date.now();
+
+  try {
+    const result = await syncToR2(sandbox, c.env);
+    const finishedAt = Date.now();
+    return c.json({
+      ok: true,
+      durationMs: finishedAt - startedAt,
+      result,
+    }, result.success ? 200 : 500);
+  } catch (error) {
+    const finishedAt = Date.now();
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    return c.json({
+      ok: false,
+      durationMs: finishedAt - startedAt,
+      error: errorMessage,
+    }, 500);
+  }
+});
+
+// GET /debug/r2-sync - Convenience wrapper for browsers
+debug.get('/r2-sync', async (c) => {
+  const sandbox = c.get('sandbox');
+  const startedAt = Date.now();
+
+  try {
+    const result = await syncToR2(sandbox, c.env);
+    const finishedAt = Date.now();
+    return c.json({
+      ok: true,
+      durationMs: finishedAt - startedAt,
+      result,
+    }, result.success ? 200 : 500);
+  } catch (error) {
+    const finishedAt = Date.now();
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    return c.json({
+      ok: false,
+      durationMs: finishedAt - startedAt,
+      error: errorMessage,
+    }, 500);
+  }
 });
 
 // GET /debug/container-config - Read the openclaw config from inside the container
