@@ -16,15 +16,15 @@ RUN npm install -g pnpm
 
 # Install moltbot (CLI is still named clawdbot until upstream renames)
 # Pin to specific version for reproducible builds
-RUN npm install -g clawdbot@2026.1.24-3 \
-    && clawdbot --version
+RUN npm install -g openclaw@latest \
+    && openclaw --version
 
 # Create moltbot directories (paths still use clawdbot until upstream renames)
 # Templates are stored in /root/.clawdbot-templates for initialization
-RUN mkdir -p /root/.clawdbot \
-    && mkdir -p /root/.clawdbot-templates \
-    && mkdir -p /root/clawd \
-    && mkdir -p /root/clawd/skills
+RUN mkdir -p /root/.openclaw \
+    && mkdir -p /root/.openclaw-templates \
+    && mkdir -p /root/openclaw \
+    && mkdir -p /root/openclaw/skills
 
 # Copy startup script
 # Build cache bust: 2026-01-28-v26-browser-skill
