@@ -11,6 +11,8 @@ export interface SyncResult {
   details?: string;
 }
 
+const DEFAULT_SYNC_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
 function isDebugEnabled(env: OpenClawEnv): boolean {
   return env.DEBUG_ROUTES === 'true' || env.DEV_MODE === 'true';
 }
@@ -24,6 +26,77 @@ function debugLog(env: OpenClawEnv, event: string, data?: Record<string, unknown
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
   return s.slice(0, max) + `…(+${s.length - max} chars)`;
+}
+
+async function bestEffortKill(
+  env: OpenClawEnv,
+  proc: unknown,
+  reason: string
+): Promise<void> {
+  const maybeKill = (proc as { kill?: () => Promise<void> }).kill;
+  if (!maybeKill) return;
+  try {
+    await maybeKill.call(proc);
+    debugLog(env, 'process_killed', { reason });
+  } catch (err) {
+    debugLog(env, 'process_kill_error', {
+      reason,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+async function checkForActiveRsync(sandbox: Sandbox, env: OpenClawEnv): Promise<{
+  hasActive: boolean;
+  details?: string;
+}> {
+  try {
+    const processes = await sandbox.listProcesses();
+    const active = processes.find((p) => {
+      const status = (p as unknown as { status?: string }).status;
+      if (status !== 'starting' && status !== 'running') return false;
+      const command = (p as unknown as { command?: string }).command || '';
+      return command.includes('rsync') && command.includes(R2_MOUNT_PATH);
+    });
+    if (!active) return { hasActive: false };
+
+    const id = (active as unknown as { id?: string }).id;
+    const command = (active as unknown as { command?: string }).command;
+    debugLog(env, 'rsync_already_running', { id, command: truncate(command || '', 500) });
+    return {
+      hasActive: true,
+      details: `Skipped: another rsync appears to be running${id ? ` (id=${id})` : ''}.`,
+    };
+  } catch (err) {
+    // If listProcesses fails, don't block sync; just log and proceed.
+    debugLog(env, 'rsync_check_error', { error: err instanceof Error ? err.message : String(err) });
+    return { hasActive: false };
+  }
+}
+
+async function checkMountResponsive(sandbox: Sandbox, env: OpenClawEnv): Promise<boolean> {
+  // A mounted s3fs filesystem can still be "hung" (I/O stalls). This fast check
+  // helps distinguish "slow sync" vs "stuck mount".
+  const cmd = `sh -lc 'ls -la ${R2_MOUNT_PATH} >/dev/null 2>&1; echo "__OK__"'`;
+  const proc = await sandbox.startProcess(cmd);
+  debugLog(env, 'mount_probe_started', { cmd });
+
+  try {
+    await waitForProcess(proc, 5000, 200);
+  } catch (err) {
+    debugLog(env, 'mount_probe_timeout', { error: err instanceof Error ? err.message : String(err) });
+    await bestEffortKill(env, proc, 'mount_probe_timeout');
+    return false;
+  }
+
+  const logs = await proc.getLogs().catch(() => ({ stdout: '', stderr: '' }));
+  const ok = (logs.stdout || '').includes('__OK__');
+  debugLog(env, 'mount_probe_result', {
+    stdout: truncate((logs.stdout || '').trim(), 500),
+    stderr: truncate((logs.stderr || '').trim(), 500),
+    ok,
+  });
+  return ok;
 }
 
 /**
@@ -59,6 +132,23 @@ export async function syncToR2(sandbox: Sandbox, env: OpenClawEnv): Promise<Sync
     return { success: false, error: 'Failed to mount R2 storage' };
   }
   debugLog(env, 'mount_ok');
+
+  // If an earlier cron run timed out, rsync may still be running in the container.
+  // Avoid piling up multiple rsync processes.
+  const activeRsync = await checkForActiveRsync(sandbox, env);
+  if (activeRsync.hasActive) {
+    return { success: true, details: activeRsync.details };
+  }
+
+  // Verify the mount is responsive before starting a potentially long rsync.
+  const mountResponsive = await checkMountResponsive(sandbox, env);
+  if (!mountResponsive) {
+    return {
+      success: false,
+      error: 'R2 mount appears unresponsive',
+      details: `A simple 'ls' against ${R2_MOUNT_PATH} did not complete quickly. This often indicates the s3fs mount is hung or severely degraded.`,
+    };
+  }
 
   // Sanity check: verify source has critical files before syncing
   // This prevents accidentally overwriting a good backup with empty/corrupted data
@@ -114,15 +204,24 @@ export async function syncToR2(sandbox: Sandbox, env: OpenClawEnv): Promise<Sync
 
   // Run rsync to backup config to R2
   // Note: Use --no-times because s3fs doesn't support setting timestamps
-  const syncCmd = `rsync -r --no-times --delete --exclude='*.lock' --exclude='*.log' --exclude='*.tmp' /root/.openclaw/ ${R2_MOUNT_PATH}/openclaw/ && rsync -r --no-times --delete /root/openclaw/skills/ ${R2_MOUNT_PATH}/skills/ && date -Iseconds > ${R2_MOUNT_PATH}/.last-sync`;
+  //
+  // Also include rsync progress/stats so Cloudflare logs show whether we are
+  // "slow" vs "stuck". Without this, rsync can spend a long time building file
+  // lists with no output.
+  const rsyncCommonFlags =
+    `-r --no-times --delete --info=progress2 --stats --human-readable ` +
+    `--exclude='*.lock' --exclude='*.log' --exclude='*.tmp'`;
+  const syncOpenclawCmd = `rsync ${rsyncCommonFlags} /root/.openclaw/ ${R2_MOUNT_PATH}/openclaw/`;
+  const syncSkillsCmd = `rsync ${rsyncCommonFlags} /root/openclaw/skills/ ${R2_MOUNT_PATH}/skills/`;
+  const writeTimestampCmd = `sh -lc 'date -Iseconds > ${R2_MOUNT_PATH}/.last-sync'`;
   
   try {
-    debugLog(env, 'rsync_started', { cmd: syncCmd });
-    const proc = await sandbox.startProcess(syncCmd);
+    debugLog(env, 'rsync_started', { cmd: syncOpenclawCmd });
+    const proc = await sandbox.startProcess(syncOpenclawCmd);
     debugLog(env, 'rsync_process', { status: proc.status });
 
     try {
-      await waitForProcess(proc, 120000); // 2 minute timeout for sync (cron + large backups can take longer)
+      await waitForProcess(proc, DEFAULT_SYNC_TIMEOUT_MS);
     } catch (e) {
       // Include logs/status to help diagnose timeouts or stuck rsync.
       const logs = await proc.getLogs().catch(() => ({ stdout: '', stderr: '' }));
@@ -133,12 +232,36 @@ export async function syncToR2(sandbox: Sandbox, env: OpenClawEnv): Promise<Sync
         stdout: truncate((logs.stdout || '').trim(), 2000),
         stderr: truncate((logs.stderr || '').trim(), 2000),
       });
+      await bestEffortKill(env, proc, 'rsync_openclaw_timeout');
       throw e;
     }
     debugLog(env, 'rsync_wait_done', {
       status: proc.status,
       exitCode: (proc as unknown as { exitCode?: number }).exitCode,
     });
+
+    debugLog(env, 'rsync_started', { cmd: syncSkillsCmd });
+    const skillsProc = await sandbox.startProcess(syncSkillsCmd);
+    debugLog(env, 'rsync_process', { status: skillsProc.status });
+
+    try {
+      await waitForProcess(skillsProc, DEFAULT_SYNC_TIMEOUT_MS);
+    } catch (e) {
+      const logs = await skillsProc.getLogs().catch(() => ({ stdout: '', stderr: '' }));
+      debugLog(env, 'rsync_wait_error', {
+        error: e instanceof Error ? e.message : String(e),
+        status: skillsProc.status,
+        exitCode: (skillsProc as unknown as { exitCode?: number }).exitCode,
+        stdout: truncate((logs.stdout || '').trim(), 2000),
+        stderr: truncate((logs.stderr || '').trim(), 2000),
+      });
+      await bestEffortKill(env, skillsProc, 'rsync_skills_timeout');
+      throw e;
+    }
+
+    debugLog(env, 'timestamp_write_started', { cmd: writeTimestampCmd });
+    const writeProc = await sandbox.startProcess(writeTimestampCmd);
+    await waitForProcess(writeProc, 15000);
 
     // Check for success by reading the timestamp file.
     // Do not rely on process status alone: status/logs can lag behind actual completion.
