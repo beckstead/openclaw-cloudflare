@@ -83,10 +83,12 @@ export async function syncToR2(sandbox: Sandbox, env: OpenClawEnv): Promise<Sync
     } else {
       const logs = await proc.getLogs();
       const diagProc = await sandbox.startProcess(
-        `echo "[diag] mount:" && mount | grep s3fs || true; ` +
-        `echo "[diag] r2_path:" && ls -la ${R2_MOUNT_PATH} || true; ` +
-        `echo "[diag] openclaw_src:" && ls -la /root/.openclaw || true; ` +
-        `echo "[diag] skills_src:" && ls -la /root/openclaw/skills || true`
+        // Run under a shell because this command uses `&&`, `||`, and pipes.
+        `sh -lc ` +
+        `"echo '[diag] mount:' && mount | grep s3fs || true; ` +
+        `echo '[diag] r2_path:' && ls -la ${R2_MOUNT_PATH} || true; ` +
+        `echo '[diag] openclaw_src:' && ls -la /root/.openclaw || true; ` +
+        `echo '[diag] skills_src:' && ls -la /root/openclaw/skills || true"`
       );
       await waitForProcess(diagProc, 5000);
       const diagLogs = await diagProc.getLogs();

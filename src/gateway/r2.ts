@@ -8,12 +8,16 @@ import { waitForProcess } from './utils';
  */
 async function isR2Mounted(sandbox: Sandbox): Promise<boolean> {
   try {
-    const proc = await sandbox.startProcess(`mount | grep "s3fs on ${R2_MOUNT_PATH}"`);
+    // Avoid shell pipelines here; just parse `mount` output directly.
+    // Example mount line (varies by environment):
+    //   s3fs#<bucket> on /data/openclaw type fuse.s3fs (rw,nosuid,nodev,...)
+    const proc = await sandbox.startProcess('mount');
     await waitForProcess(proc, 5000, 200);
     const logs = await proc.getLogs();
-    // If stdout has content, the mount exists
-    const mounted = !!(logs.stdout && logs.stdout.includes('s3fs'));
-    console.log('isR2Mounted check:', mounted, 'stdout:', logs.stdout?.slice(0, 100));
+    const out = logs.stdout || '';
+    const lines = out.split('\n');
+    const mounted = lines.some((line) => line.includes('s3fs') && line.includes(` on ${R2_MOUNT_PATH} `));
+    console.log('isR2Mounted check:', mounted);
     return mounted;
   } catch (err) {
     console.log('isR2Mounted error:', err);

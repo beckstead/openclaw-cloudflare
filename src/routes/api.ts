@@ -34,9 +34,37 @@ adminApi.get('/devices', async (c) => {
     // Run openclaw CLI to list devices (CLI is still named openclaw until upstream renames)
     // Must specify --url to connect to the gateway running in the same container
     const proc = await sandbox.startProcess('openclaw devices list --json --url ws://localhost:18789');
-    await waitForProcess(proc, CLI_TIMEOUT_MS);
+    let logs: { stdout?: string; stderr?: string };
+    try {
+      await waitForProcess(proc, CLI_TIMEOUT_MS);
+      logs = await proc.getLogs();
+    } catch (err) {
+      // Process status can lag; try logs anyway to avoid false timeouts.
+      logs = await proc.getLogs().catch(() => ({ stdout: '', stderr: '' }));
+      const stdout = logs.stdout || '';
+      const stderr = logs.stderr || '';
 
-    const logs = await proc.getLogs();
+      // If we can parse a valid response despite the timeout, return it.
+      try {
+        const jsonMatch = stdout.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const data = JSON.parse(jsonMatch[0]);
+          return c.json(data);
+        }
+      } catch {
+        // fall through to error response
+      }
+
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      return c.json({
+        error: errorMessage,
+        timeoutMs: CLI_TIMEOUT_MS,
+        process: { id: proc.id, status: proc.status, exitCode: proc.exitCode },
+        stdout,
+        stderr,
+      }, 504);
+    }
+
     const stdout = logs.stdout || '';
     const stderr = logs.stderr || '';
 
@@ -86,7 +114,22 @@ adminApi.post('/devices/:requestId/approve', async (c) => {
 
     // Run openclaw CLI to approve the device (CLI is still named openclaw)
     const proc = await sandbox.startProcess(`openclaw devices approve ${requestId} --url ws://localhost:18789`);
-    await waitForProcess(proc, CLI_TIMEOUT_MS);
+    try {
+      await waitForProcess(proc, CLI_TIMEOUT_MS);
+    } catch (err) {
+      // Same as list: status can lag; gather logs and return a more actionable error.
+      const logs = await proc.getLogs().catch(() => ({ stdout: '', stderr: '' }));
+      const stdout = logs.stdout || '';
+      const stderr = logs.stderr || '';
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      return c.json({
+        error: errorMessage,
+        timeoutMs: CLI_TIMEOUT_MS,
+        process: { id: proc.id, status: proc.status, exitCode: proc.exitCode },
+        stdout,
+        stderr,
+      }, 504);
+    }
 
     const logs = await proc.getLogs();
     const stdout = logs.stdout || '';
@@ -118,7 +161,21 @@ adminApi.post('/devices/approve-all', async (c) => {
 
     // First, get the list of pending devices (CLI is still named openclaw)
     const listProc = await sandbox.startProcess('openclaw devices list --json --url ws://localhost:18789');
-    await waitForProcess(listProc, CLI_TIMEOUT_MS);
+    try {
+      await waitForProcess(listProc, CLI_TIMEOUT_MS);
+    } catch (err) {
+      const logs = await listProc.getLogs().catch(() => ({ stdout: '', stderr: '' }));
+      const stdout = logs.stdout || '';
+      const stderr = logs.stderr || '';
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      return c.json({
+        error: errorMessage,
+        timeoutMs: CLI_TIMEOUT_MS,
+        process: { id: listProc.id, status: listProc.status, exitCode: listProc.exitCode },
+        stdout,
+        stderr,
+      }, 504);
+    }
 
     const listLogs = await listProc.getLogs();
     const stdout = listLogs.stdout || '';
