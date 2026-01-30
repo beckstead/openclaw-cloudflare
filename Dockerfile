@@ -27,7 +27,7 @@ RUN mkdir -p /root/.openclaw \
     && mkdir -p /root/openclaw/skills
 
 # Copy startup script
-# Build cache bust: 2026-01-31-v1
+# Build cache bust: 2026-01-31-v2
 COPY start-openclaw.sh /usr/local/bin/start-openclaw.sh
 RUN chmod +x /usr/local/bin/start-openclaw.sh
 
